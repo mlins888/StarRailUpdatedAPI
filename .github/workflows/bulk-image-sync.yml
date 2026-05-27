@@ -1,0 +1,40 @@
+name: Bulk Image Downloader
+
+# The workflow_dispatch trigger creates a "Run workflow" button in the GitHub UI
+on:
+  workflow_dispatch:
+
+# Give the Action permission to push code back to your repository
+permissions:
+  contents: write
+
+jobs:
+  download-images:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Grab your repository's code
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. Set up Python (the script only uses standard libraries, so no pip install needed!)
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      # 3. Run your bulk downloader script
+      - name: Run bulk image dumper
+        run: python3 scripts/dump_all_images.py
+
+      # 4. Commit the new images and push them to the main branch
+      - name: Commit and push changes
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          
+          # Add all newly downloaded files
+          git add .
+          
+          # Only commit and push if there are actually new files
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Bulk added missing images [skip ci]" && git push)

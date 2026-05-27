@@ -1,0 +1,59 @@
+name: Sync upstream StarRailRes
+
+on:
+  # Run every day at 06:00 UTC. 
+  schedule:
+    - cron: "0 6 * * *"
+  # Allows manual trigger from the Actions tab.
+  workflow_dispatch:
+
+permissions:
+  # Need write access to push commits back to the repo.
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run sync script
+        id: sync
+        run: |
+          python scripts/sync_upstream.py
+          # Capture whether anything actually changed.
+          if [[ -n "$(git status --porcelain db/)" ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit and push if changed
+        if: steps.sync.outputs.changed == 'true'
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add db/
+          # Build a commit body from the run summary.
+          if [[ -f scripts/.last_sync_summary.json ]]; then
+            {
+              echo "chore: sync upstream StarRailRes"
+              echo
+              echo "Summary:"
+              cat scripts/.last_sync_summary.json
+            } > /tmp/commit_msg.txt
+          else
+            echo "chore: sync upstream StarRailRes" > /tmp/commit_msg.txt
+          fi
+          git commit -F /tmp/commit_msg.txt
+          git push
+
+      - name: No changes
+        if: steps.sync.outputs.changed == 'false'
+        run: echo "Upstream is unchanged relative to local — nothing to commit."

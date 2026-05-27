@@ -17,6 +17,7 @@ Strategy (merge mode):
 Run locally:    python scripts/sync_upstream.py
 Run in CI:      same command; the workflow handles git commit/push.
 """
+
 from __future__ import annotations
 
 import json
@@ -27,8 +28,12 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# jsDelivr is faster than raw.githubusercontent.com and friendlier to CI rate limits.
-UPSTREAM_BASE = "https://cdn.jsdelivr.net/gh/Mar-7th/StarRailRes@master/index_new"
+# We try jsDelivr first (fast, CDN-cached) and fall back to raw.githubusercontent.com
+# if it 403s — jsDelivr intermittently blocks GitHub Actions IP ranges.
+UPSTREAM_BASES = [
+    "https://cdn.jsdelivr.net/gh/Mar-7th/StarRailRes@master/index_new",
+    "https://raw.githubusercontent.com/Mar-7th/StarRailRes/master/index_new",
+]
 
 LANGUAGES = ["cn", "cht", "de", "en", "es", "fr", "jp", "kr", "pt", "ru", "th", "vi"]
 
@@ -55,7 +60,7 @@ FILE_MAPPING = [
 
 
 def fetch(url: str) -> dict | list | None:
-    """GET a URL and parse JSON. Returns None on 404 (upstream may not have every lang/file)."""
+    """GET a URL and parse JSON. Returns None on 404, raises on 403 so caller can try next mirror."""
     req = urllib.request.Request(url, headers={"User-Agent": "starrail-sync"})
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
@@ -64,6 +69,24 @@ def fetch(url: str) -> dict | list | None:
         if e.code == 404:
             return None
         raise
+
+
+def fetch_with_fallback(path: str) -> dict | list | None:
+    """Try each UPSTREAM_BASE in order. None on real 404; raises if all mirrors failed."""
+    last_err: Exception | None = None
+    for base in UPSTREAM_BASES:
+        url = f"{base}/{path}"
+        try:
+            return fetch(url)
+        except urllib.error.HTTPError as e:
+            # 403 / 429 / 5xx etc. — try the next mirror.
+            last_err = e
+            print(f"  ! {url} -> HTTP {e.code}; trying next mirror", file=sys.stderr)
+        except Exception as e:
+            last_err = e
+            print(f"  ! {url} -> {type(e).__name__}: {e}; trying next mirror", file=sys.stderr)
+    # All mirrors failed.
+    raise last_err if last_err else RuntimeError(f"all mirrors failed for {path}")
 
 
 def load_local(path: Path) -> dict | list | None:
@@ -98,12 +121,12 @@ def write_local(path: Path, data) -> None:
 
 
 def sync_one(lang: str, upstream_name: str, local_name: str, summary: dict) -> None:
-    url = f"{UPSTREAM_BASE}/{lang}/{upstream_name}"
+    rel_path = f"{lang}/{upstream_name}"
     local_path = REPO_ROOT / "db" / lang / local_name
 
-    upstream = fetch(url)
+    upstream = fetch_with_fallback(rel_path)
     if upstream is None:
-        summary.setdefault("missing_upstream", []).append(f"{lang}/{upstream_name}")
+        summary.setdefault("missing_upstream", []).append(rel_path)
         return
 
     local = load_local(local_path)

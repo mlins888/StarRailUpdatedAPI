@@ -25,7 +25,7 @@ jobs:
 
       # 3. Run your bulk downloader script
       - name: Run bulk image dumper
-        run: python3 scripts/dump_all_images.py
+        run: python3 scripts/dump_all_images_improved.py
 
       # 4. Commit the new images and push them to the main branch
       - name: Commit and push changes
